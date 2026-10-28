@@ -400,6 +400,33 @@ test_expired_and_rs_only() {
     assert_no_dangerous_route_ops
 }
 
+test_manual_rs_when_healthy() {
+    new_case "manual RS must run even if route healthy"
+    echo "中国联通" > "$MOCK_DIR/operator"
+    route_line fe80::2 sipa_eth0 sipa_eth0 43200 > "$MOCK_DIR/routes"
+    echo ok_renew > "$MOCK_DIR/rdisc6_mode"
+    run_core --rs-only
+    assert_rc 0
+    assert_result RA_RECEIVED yes
+    assert_result ROUTE_REFRESHED yes
+    assert_rdisc_calls 1
+    assert_no_dangerous_route_ops
+}
+
+test_route_updated_without_confirmed_ra() {
+    new_case "route updated without RA confirmation"
+    echo "中国联通" > "$MOCK_DIR/operator"
+    : > "$MOCK_DIR/routes"
+    echo noanswer_restore > "$MOCK_DIR/rdisc6_mode"
+    run_core
+    assert_rc 0
+    assert_result ROUTE_REFRESHED yes
+    assert_result RA_RECEIVED no
+    assert_result RESULT ok
+    assert_contains "$(sed -n 's/^MESSAGE=//p' "$RRA_STATE_DIR/last_result")" "未确认收到 RA" "result does not invent RA"
+    assert_no_dangerous_route_ops
+}
+
 test_static_route() {
     new_case "static route"
     echo "中国联通" > "$MOCK_DIR/operator"
@@ -551,11 +578,21 @@ test_watcher_single_instance() {
     sh "$WATCH" >/dev/null 2>&1
     assert_eq "$(cat "$RRA_STATE_DIR/refresh_route_watch.pid")" "$WATCH_PID" "second watcher did not replace first"
     OLD_PID=$WATCH_PID
-    kill -9 "$OLD_PID" 2>/dev/null
+    kill -TERM "$OLD_PID" 2>/dev/null
+    WTRY=0
+    while kill -0 "$OLD_PID" 2>/dev/null && [ "$WTRY" -lt 30 ]; do
+        sleep 0.1
+        WTRY=$((WTRY + 1))
+    done
+    if kill -0 "$OLD_PID" 2>/dev/null; then
+        fail 'watcher did not stop on SIGTERM'
+    else
+        pass 'watcher stopped promptly on SIGTERM'
+    fi
     wait "$OLD_PID" 2>/dev/null
     WATCH_PID=""
-    sleep 0.3
-    if [ -d "/proc/$OLD_PID" ]; then fail 'watcher still running'; else pass 'no watcher loop left after stop'; fi
+    assert_file_absent "$RRA_STATE_DIR/refresh_route_watch.pid" 'watcher pid cleaned'
+    assert_file_absent "$RRA_STATE_DIR/.watcher.lock" 'watcher lock cleaned'
 }
 
 # ---------------------------------------------------------------------------
@@ -573,6 +610,8 @@ test_unknown_compat
 test_multi_instance
 test_cooldown
 test_expired_and_rs_only
+test_manual_rs_when_healthy
+test_route_updated_without_confirmed_ra
 test_static_route
 test_threshold_and_multiple_candidates
 test_status_readonly
