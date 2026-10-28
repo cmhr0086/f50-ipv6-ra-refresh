@@ -471,7 +471,8 @@ lock_busy() {
 take_lock() {
     mkdir "$LOCK" 2>/dev/null || return 1
     printf '%s\n' "$$" > "$LOCK/pid"
-    trap 'rm -rf "$LOCK" 2>/dev/null' EXIT INT TERM HUP
+    trap '[ "$(cat "$LOCK/pid" 2>/dev/null)" = "$" ] && rm -rf "$LOCK" 2>/dev/null' EXIT
+    trap 'exit 0' INT TERM HUP
     return 0
 }
 
@@ -897,19 +898,6 @@ esac
 [ "$GW_OK" = 1 ] && log "默认网关: $GW（表: $TABLE）"
 [ "$GW_OK" = 0 ] && [ -n "$GW" ] && log "警告：解析到的网关不在 fe80::/10，安全模式不会使用它"
 
-# 有效期充足或静态路由：不做任何修改。
-if [ "$ROUTE_STATE" = healthy ] || [ "$ROUTE_STATE" = static ]; then
-    test_connectivity
-    ROUTE_REFRESHED=not_needed
-    STRATEGY=none
-    if [ "$ROUTE_STATE" = static ]; then
-        write_result ok 0 "默认路由为静态（无 expires），无需刷新"
-    else
-        write_result ok 0 "默认有效期充足（$EXPIRES 秒），无需刷新"
-    fi
-    exit 0
-fi
-
 # ---- 最小重试间隔 ----
 if [ "$FORCE" != 1 ] && [ "$RS_ONLY" != 1 ]; then
     if ! check_cooldown; then
@@ -944,7 +932,7 @@ if [ "$RS_ONLY" = 1 ]; then
         if [ "$PRE_STATE" = missing ]; then
             ROUTE_REFRESHED=yes
             STRATEGY=nd_restore
-        elif [ "$ROUTE_STATE" = static ] || { is_uint "$EXPIRES" && [ "$EXPIRES" -gt "$PRE_EXP" ]; }; then
+        elif { [ "$PRE_STATE" != static ] && [ "$ROUTE_STATE" = static ]; } || { is_uint "$EXPIRES" && [ "$EXPIRES" -gt "$PRE_EXP" ]; }; then
             ROUTE_REFRESHED=yes
             STRATEGY=nd_renew
         else
@@ -962,6 +950,20 @@ if [ "$RS_ONLY" = 1 ]; then
     write_result fail 1 "未收到 RA（rdisc6 退出码 $RS_RC）"
     exit 1
 fi
+
+# 有效期充足或静态路由：不做任何修改。
+if [ "$ROUTE_STATE" = healthy ] || [ "$ROUTE_STATE" = static ]; then
+    test_connectivity
+    ROUTE_REFRESHED=not_needed
+    STRATEGY=none
+    if [ "$ROUTE_STATE" = static ]; then
+        write_result ok 0 "默认路由为静态（无 expires），无需刷新"
+    else
+        write_result ok 0 "默认有效期充足（$EXPIRES 秒），无需刷新"
+    fi
+    exit 0
+fi
+
 
 PRE_STATE=$ROUTE_STATE
 if is_uint "$EXPIRES"; then PRE_EXP=$EXPIRES; else PRE_EXP=0; fi
@@ -989,7 +991,12 @@ if [ "$MODE" = safe ]; then
         set_strategy "$STRATEGY"
         log "刷新结果：路由已验证刷新（$ROUTE_STATE，剩余 $EXPIRES 秒，策略 $STRATEGY）"
         test_connectivity
-        write_result ok 0 "已收到 RA，IPv6 默认路由已验证刷新（剩余 $EXPIRES 秒，策略 $STRATEGY）"
+        if [ "$RA_RECEIVED" = yes ]; then
+            write_result ok 0 "收到 RA，IPv6 默认路由已验证刷新（剩余 $EXPIRES 秒，策略 $STRATEGY）"
+        else
+            log "警告：路由已刷新，但 rdisc6 未确认收到 RA（退出码 $RS_RC）"
+            write_result ok 0 "路由已刷新，但未确认收到 RA（rdisc6 退出码 $RS_RC）"
+        fi
         exit 0
     fi
     read_route
@@ -1195,6 +1202,7 @@ PIDF=$STATE_DIR/refresh_route_watch.pid
 WLOCK=$STATE_DIR/.watcher.lock
 CORE=$STATE_DIR/refresh_route.sh
 INTERVAL=3600
+CHILD_PID=""
 
 if [ -f "$CONF" ]; then
     V=$(sed -n 's/^INTERVAL=//p' "$CONF" 2>/dev/null | head -n 1 | tr -d '\r\n \t')
@@ -1211,12 +1219,23 @@ if [ "$INTERVAL" -gt 86400 ] 2>/dev/null; then
     INTERVAL=86400
 fi
 
+watch_cleanup() {
+    [ -n "$CHILD_PID" ] && kill "$CHILD_PID" 2>/dev/null
+    if [ "$(cat "$WLOCK/pid" 2>/dev/null)" = "$" ]; then
+        rm -rf "$WLOCK" 2>/dev/null
+    fi
+    if [ "$(cat "$PIDF" 2>/dev/null)" = "$" ]; then
+        rm -f "$PIDF" 2>/dev/null
+    fi
+}
+
 take_wlock() {
     mkdir "$WLOCK" 2>/dev/null || return 1
     printf '%s\n' "$$" > "$WLOCK/pid"
     printf '%s\n' "$$" > "$PIDF"
     # 退出时只清理仍属于自己的锁与 PID，避免“停旧起新”时误删继任者刚建好的文件。
-    trap '[ "$(cat "$WLOCK/pid" 2>/dev/null)" = "$$" ] && rm -rf "$WLOCK" 2>/dev/null; [ "$(cat "$PIDF" 2>/dev/null)" = "$$" ] && rm -f "$PIDF" 2>/dev/null' EXIT INT TERM HUP
+    trap 'watch_cleanup' EXIT
+    trap 'exit 0' INT TERM HUP
     return 0
 }
 
@@ -1233,12 +1252,18 @@ fi
 while true; do
     if [ -f "$CORE" ]; then
         if command -v timeout >/dev/null 2>&1; then
-            timeout 180 sh "$CORE" >/dev/null 2>&1
+            timeout 180 sh "$CORE" >/dev/null 2>&1 &
         else
-            sh "$CORE" >/dev/null 2>&1
+            sh "$CORE" >/dev/null 2>&1 &
         fi
+        CHILD_PID=$!
+        wait "$CHILD_PID" 2>/dev/null || :
+        CHILD_PID=""
     fi
-    sleep "$INTERVAL"
+    sleep "$INTERVAL" &
+    CHILD_PID=$!
+    wait "$CHILD_PID" 2>/dev/null || :
+    CHILD_PID=""
 done
 `
 
@@ -1335,17 +1360,21 @@ done
         return (res?.content || '').includes('running')
     }
 
-    // 校验 rdisc6 文件是否有效：大小 -> ELF 魔数 -> 可执行性
+    // 校验 rdisc6：大小、ELF64 little-endian AArch64 文件头，以及限时执行。
+    // ELF magic 不是充分条件；被信号终止、超时、架构不兼容必须拒绝。
     const verifyRdisc6 = async (path = RRA.rdPath) => {
         const sz = await runShellWithRoot(`wc -c < ${path} 2>/dev/null`)
         const size = Number((sz?.content || '').trim())
         if (!Number.isFinite(size) || size < 10240) return false
-        const elf = await runShellWithRoot(`dd if=${path} bs=1 count=4 2>/dev/null`)
-        if (!(elf?.content || '').includes('ELF')) return false
-        const run = await runShellWithRoot(`if command -v timeout >/dev/null 2>&1; then timeout 3 ${path} --help >/dev/null 2>&1; else ${path} --help >/dev/null 2>&1; fi; echo EXIT:$?`)
-        const m = (run?.content || '').match(/EXIT:(\d+)/)
-        if (m && (m[1] === '126' || m[1] === '127')) return false
-        return true
+        const hdr = await runShellWithRoot(`H=$(dd if=${path} bs=1 count=20 2>/dev/null | od -An -tx1 2>/dev/null | tr -d '[:space:]'); printf 'RRA_HDR:%s\\n' "$H"`)
+        const hex = (hdr?.content || '').match(/RRA_HDR:([0-9a-fA-F]{40})/)
+        if (!hex || !/^7f454c460201[0-9a-fA-F]{24}b700$/i.test(hex[1])) return false
+        // 要求系统具备 timeout。--help 可返回 0/1/2 等非零状态，但不接受超时或异常终止。
+        const run = await runShellWithRoot(`if command -v timeout >/dev/null 2>&1; then timeout 5 ${path} --help >/dev/null 2>&1; echo RRA_VERIFY_RC:$?; else echo RRA_VERIFY_NO_TIMEOUT; fi`, 10000)
+        const match = (run?.content || '').match(/RRA_VERIFY_RC:(\d+)/)
+        if (!match) return false
+        const rc = Number(match[1])
+        return Number.isInteger(rc) && rc >= 0 && rc <= 123
     }
 
     // 写文本文件到设备（目录需已存在）
@@ -1546,7 +1575,7 @@ done
         }
         const lines = CORE_CONF_KEYS.map(k => `'${k}=${next[k]}'`).join(' ')
         const res = await runShellWithRoot(
-            `mkdir -p ${RRA.dir}; printf '%s\\n' ${lines} > ${RRA.coreConfPath}.tmp && mv ${RRA.coreConfPath}.tmp ${RRA.coreConfPath} && chmod 666 ${RRA.coreConfPath} 2>/dev/null && echo RRA_CONF_OK || echo RRA_CONF_FAIL`
+            `mkdir -p ${RRA.dir}; printf '%s\\n' ${lines} > ${RRA.coreConfPath}.tmp && mv ${RRA.coreConfPath}.tmp ${RRA.coreConfPath} && chmod 600 ${RRA.coreConfPath} 2>/dev/null && echo RRA_CONF_OK || echo RRA_CONF_FAIL`
         )
         if (!(res?.content || '').includes('RRA_CONF_OK')) {
             createToast('保存插件配置失败，请检查目录权限', 'red')
@@ -1570,12 +1599,12 @@ done
         if (!await writeTextFile(WATCH_SH, 'refresh_route_watch.sh', RRA.watchPath)) {
             return createToast('写入 refresh_route_watch.sh 失败', 'red')
         }
-        const chmod = await runShellWithRoot(`chmod 777 ${RRA.scriptPath} ${RRA.watchPath}`)
+        const chmod = await runShellWithRoot(`chmod 700 ${RRA.scriptPath} ${RRA.watchPath}`)
         if (!chmod.success) return createToast('设置执行权限失败', 'red')
 
         // 首次安装写入安全默认配置；更新时保留用户已有配置
         const initConf = await runShellWithRoot(
-            `C=${RRA.coreConfPath}; if [ ! -f "$C" ]; then printf '%s\\n' 'MODE=safe' 'THRESHOLD=21600' 'ALLOW_UNKNOWN_OPERATOR=0' 'PING_ENABLE=1' 'PING_TARGET=2400:3200::1' 'MIN_RETRY=300' 'RDISC6_TIMEOUT=3' 'SETTLE_TRIES=6' > "$C"; fi; chmod 666 "$C" 2>/dev/null; [ -f "$C" ] && echo RRA_CONF_OK || echo RRA_CONF_FAIL`
+            `C=${RRA.coreConfPath}; if [ ! -f "$C" ]; then printf '%s\\n' 'MODE=safe' 'THRESHOLD=21600' 'ALLOW_UNKNOWN_OPERATOR=0' 'PING_ENABLE=1' 'PING_TARGET=2400:3200::1' 'MIN_RETRY=300' 'RDISC6_TIMEOUT=3' 'SETTLE_TRIES=6' > "$C"; fi; chmod 600 "$C" 2>/dev/null; [ -f "$C" ] && echo RRA_CONF_OK || echo RRA_CONF_FAIL`
         )
         if (!(initConf?.content || '').includes('RRA_CONF_OK')) {
             return createToast('初始化安全配置失败，请检查插件目录', 'red')
@@ -1663,7 +1692,7 @@ done
 
     // 校验并落地临时 rdisc6 文件（保留原有可用二进制，失败不覆盖）
     const finalizeRdisc6 = async (tmpPath) => {
-        const chmod = await runShellWithRoot(`chmod 777 ${tmpPath} 2>/dev/null`)
+        const chmod = await runShellWithRoot(`chmod 700 ${tmpPath} 2>/dev/null`)
         if (!chmod.success) return '设置执行权限失败'
         if (!(await verifyRdisc6(tmpPath))) {
             await runShellWithRoot(`rm -f ${tmpPath}`)
@@ -2034,7 +2063,7 @@ echo "IMPORTED:none"
         createToast('日志已刷新')
     }
     document.querySelector('#rra_log_clear').onclick = async () => {
-        const res = await runShellWithRoot(`mkdir -p ${RRA.dir} && : > ${RRA.logPath} && chmod 666 ${RRA.logPath} 2>/dev/null; [ -f ${RRA.logPath} ] && echo RRA_LOG_OK || echo RRA_LOG_FAIL`)
+        const res = await runShellWithRoot(`mkdir -p ${RRA.dir} && : > ${RRA.logPath} && chmod 600 ${RRA.logPath} 2>/dev/null; [ -f ${RRA.logPath} ] && echo RRA_LOG_OK || echo RRA_LOG_FAIL`)
         const ok = (res?.content || '').includes('RRA_LOG_OK')
         const ta = document.querySelector('#rra_log')
         prevLogText = ''
