@@ -20,6 +20,7 @@ PIDF=$STATE_DIR/refresh_route_watch.pid
 WLOCK=$STATE_DIR/.watcher.lock
 CORE=$STATE_DIR/refresh_route.sh
 INTERVAL=3600
+CHILD_PID=""
 
 if [ -f "$CONF" ]; then
     V=$(sed -n 's/^INTERVAL=//p' "$CONF" 2>/dev/null | head -n 1 | tr -d '\r\n \t')
@@ -36,12 +37,23 @@ if [ "$INTERVAL" -gt 86400 ] 2>/dev/null; then
     INTERVAL=86400
 fi
 
+watch_cleanup() {
+    [ -n "$CHILD_PID" ] && kill "$CHILD_PID" 2>/dev/null
+    if [ "$(cat "$WLOCK/pid" 2>/dev/null)" = "$" ]; then
+        rm -rf "$WLOCK" 2>/dev/null
+    fi
+    if [ "$(cat "$PIDF" 2>/dev/null)" = "$" ]; then
+        rm -f "$PIDF" 2>/dev/null
+    fi
+}
+
 take_wlock() {
     mkdir "$WLOCK" 2>/dev/null || return 1
     printf '%s\n' "$$" > "$WLOCK/pid"
     printf '%s\n' "$$" > "$PIDF"
     # 退出时只清理仍属于自己的锁与 PID，避免“停旧起新”时误删继任者刚建好的文件。
-    trap '[ "$(cat "$WLOCK/pid" 2>/dev/null)" = "$$" ] && rm -rf "$WLOCK" 2>/dev/null; [ "$(cat "$PIDF" 2>/dev/null)" = "$$" ] && rm -f "$PIDF" 2>/dev/null' EXIT INT TERM HUP
+    trap 'watch_cleanup' EXIT
+    trap 'exit 0' INT TERM HUP
     return 0
 }
 
@@ -58,10 +70,16 @@ fi
 while true; do
     if [ -f "$CORE" ]; then
         if command -v timeout >/dev/null 2>&1; then
-            timeout 180 sh "$CORE" >/dev/null 2>&1
+            timeout 180 sh "$CORE" >/dev/null 2>&1 &
         else
-            sh "$CORE" >/dev/null 2>&1
+            sh "$CORE" >/dev/null 2>&1 &
         fi
+        CHILD_PID=$!
+        wait "$CHILD_PID" 2>/dev/null || :
+        CHILD_PID=""
     fi
-    sleep "$INTERVAL"
+    sleep "$INTERVAL" &
+    CHILD_PID=$!
+    wait "$CHILD_PID" 2>/dev/null || :
+    CHILD_PID=""
 done
