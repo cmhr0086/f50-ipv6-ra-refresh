@@ -41,7 +41,7 @@
 #   PING_ENABLE=0|1                   是否做公网 IPv6 连通性测试（默认 1）
 #   PING_TARGET=2400:3200::1          连通性测试目标
 #   MIN_RETRY=300                     两次刷新尝试的最小间隔（秒），防止快速重试
-#   RDISC6_TIMEOUT=3                  rdisc6 外层超时（秒）
+#   RDISC6_TIMEOUT=10                 rdisc6 外层超时（秒）
 #   SETTLE_TRIES=6                    发 RA 后等待路由变化的最大秒数
 #
 
@@ -204,7 +204,7 @@ read_conf() {
     ALLOW_UNKNOWN_OPERATOR=$(clamp_uint "$(conf_get ALLOW_UNKNOWN_OPERATOR 0)" 0 1 0)
     PING_ENABLE=$(clamp_uint "$(conf_get PING_ENABLE 1)" 0 1 1)
     MIN_RETRY=$(clamp_uint "$(conf_get MIN_RETRY 300)" 60 86400 300)
-    RDISC6_TIMEOUT=$(clamp_uint "$(conf_get RDISC6_TIMEOUT 3)" 1 30 3)
+    RDISC6_TIMEOUT=$(clamp_uint "$(conf_get RDISC6_TIMEOUT 10)" 1 30 10)
     SETTLE_TRIES=$(clamp_uint "$(conf_get SETTLE_TRIES 6)" 1 20 6)
     PING_TARGET=$(conf_get PING_TARGET 2400:3200::1)
     case "$PING_TARGET" in
