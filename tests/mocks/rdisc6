@@ -15,6 +15,10 @@ MODE=$(cat "$M/rdisc6_mode" 2>/dev/null)
 if [ "$MODE" = noanswer ]; then
     exit 2
 fi
+if [ "$MODE" = noanswer_restore ]; then
+    printf 'default via fe80::2 dev %s table %s proto ra metric 1024 expires 65535sec\n' "$DEV" "$DEV" >> "$M/routes"
+    exit 2
+fi
 
 echo "Soliciting ff02::2 (ff02::2) on $DEV..."
 echo "Router lifetime           :           65535 (      0xffff)"
