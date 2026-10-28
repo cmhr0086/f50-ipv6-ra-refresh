@@ -1,0 +1,93 @@
+#!/bin/sh
+# 模拟 Android iproute2；状态全部来自 $MOCK_DIR 下的文本文件。
+M=$MOCK_DIR
+printf '%s\n' "$*" >> "$M/ip_calls"
+
+if [ "$1" = link ]; then
+    # ip link show dev NAME
+    DEV=$4
+    if grep -q "^$DEV:UP$" "$M/links" 2>/dev/null; then
+        echo "2: $DEV: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc mq state UP mode DEFAULT group default qlen 1000"
+        exit 0
+    fi
+    echo "Device \"$DEV\" does not exist." >&2
+    exit 1
+fi
+
+if [ "$1" = "-6" ]; then
+    case "$2" in
+        addr)
+            # ip -6 addr show dev NAME [scope global]
+            DEV=$5
+            if grep -q "^$DEV:UP$" "$M/links" 2>/dev/null; then
+                echo "2: $DEV: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500"
+                grep "^$DEV:" "$M/addrs" 2>/dev/null | sed "s/^$DEV://" | while IFS= read -r A; do
+                    [ -n "$A" ] || continue
+                    echo "    inet6 $A scope global dynamic mngtmpaddr"
+                done
+            fi
+            exit 0
+            ;;
+        route)
+            case "$3" in
+                show)
+                    cat "$M/routes" 2>/dev/null
+                    exit 0
+                    ;;
+                del)
+                    shift 3
+                    GW=""
+                    DEV=""
+                    TAB=main
+                    while [ $# -gt 0 ]; do
+                        case "$1" in
+                            via) GW=$2; shift 2 ;;
+                            dev) DEV=$2; shift 2 ;;
+                            table) TAB=$2; shift 2 ;;
+                            *) shift ;;
+                        esac
+                    done
+                    awk -v gw="$GW" -v dev="$DEV" -v tab="$TAB" '
+                        {
+                            ismain = ($0 !~ / table /)
+                            matchtable = ismain ? (tab == "main") : (index($0, " table " tab " ") > 0)
+                            if (matchtable && index($0, " via " gw " ") > 0 && index($0, " dev " dev " ") > 0) next
+                            print
+                        }' "$M/routes" > "$M/routes.new" && mv "$M/routes.new" "$M/routes"
+                    exit 0
+                    ;;
+                replace)
+                    shift 3
+                    if [ -f "$M/ip_replace_fail" ]; then
+                        exit 1
+                    fi
+                    REST=$(printf '%s\n' "$*" | sed 's/^default //')
+                    DEV=""
+                    TAB=main
+                    set -- $REST
+                    while [ $# -gt 0 ]; do
+                        case "$1" in
+                            dev) DEV=$2; shift 2 ;;
+                            table) TAB=$2; shift 2 ;;
+                            *) shift ;;
+                        esac
+                    done
+                    LINE="default $REST"
+                    LINE=$(printf '%s\n' "$LINE" | sed 's/ expires \([0-9][0-9]*\)$/ expires \1sec/')
+                    awk -v dev="$DEV" -v tab="$TAB" '
+                        {
+                            ismain = ($0 !~ / table /)
+                            matchtable = ismain ? (tab == "main") : (index($0, " table " tab " ") > 0)
+                            if (matchtable && $1 == "default" && index($0, " dev " dev " ") > 0) next
+                            print
+                        }' "$M/routes" > "$M/routes.new"
+                    printf '%s\n' "$LINE" >> "$M/routes.new"
+                    mv "$M/routes.new" "$M/routes"
+                    exit 0
+                    ;;
+            esac
+            ;;
+    esac
+fi
+
+exit 0

@@ -1,0 +1,40 @@
+#!/bin/sh
+# 模拟 rdisc6：由 $MOCK_DIR/rdisc6_mode 控制行为。
+#   noanswer   退出码 2，不产生 RA
+#   ok_renew   退出码 0，把对应 dev 的默认路由 expires 改为 65535sec
+#   ok_restore 退出码 0，追加一条新的默认路由
+#   ok_noroute 退出码 0，但内核路由表不变（用于验证“收到 RA 但路由未出现”）
+M=$MOCK_DIR
+DEV=""
+for A in "$@"; do
+    DEV=$A
+done
+printf '%s\n' "$DEV" >> "$M/rdisc6_calls"
+
+MODE=$(cat "$M/rdisc6_mode" 2>/dev/null)
+if [ "$MODE" = noanswer ]; then
+    exit 2
+fi
+
+echo "Soliciting ff02::2 (ff02::2) on $DEV..."
+echo "Router lifetime           :           65535 (      0xffff)"
+echo " from fe80::2"
+
+case "$MODE" in
+    ok_renew)
+        awk -v dev="$DEV" '
+            {
+                if ($1 == "default" && index($0, " dev " dev " ") > 0) {
+                    sub(/expires -?[0-9]+sec/, "expires 65535sec")
+                }
+                print
+            }' "$M/routes" > "$M/routes.new" && mv "$M/routes.new" "$M/routes"
+        ;;
+    ok_restore)
+        printf 'default via fe80::2 dev %s table %s proto ra metric 1024 expires 65535sec\n' "$DEV" "$DEV" >> "$M/routes"
+        ;;
+    *)
+        :
+        ;;
+esac
+exit 0
