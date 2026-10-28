@@ -19,7 +19,7 @@
 | rdisc6 | 下载 / 上传 | 下载 / 上传 / **从 `/data/local/tmp/rdisc6` 导入** |
 | 首次安装 | — | 默认**不开启**开机自启，先手动测试 |
 | 状态 | `last_strategy` | 新增 `last_result` 结构化状态（面板读取） |
-| 测试 | 无 | 普通 Linux 可跑的模拟测试（mocks + 171 项断言） |
+| 测试 | 无 | 普通 Linux 可跑的模拟测试（mocks + 184 项断言） |
 
 > 关于根因：上游 README 描述“F50 仅收到一次 RA，65535 秒后默认路由到期”。本 Fork **不把“RA 到期”当作已经 100% 证实的唯一根因**；目前能确认的是：设备上主动发送 RS 能引出真实 RA 并恢复默认路由。安全模式因此只做“主动 RS + 回读验证”，不靠猜测网关重建路由。
 
@@ -133,7 +133,7 @@ default via fe80::2 dev sipa_eth0 proto ra metric 1024 expires 65534sec
 1. **导入现有文件（推荐，避免重复下载）**
    面板点“导入现有rdisc6”，依次尝试：
    `/data/local/tmp/rdisc6` → `/data/xl_cron/bin/rdisc6` → `/sdcard/rdisc6`。
-   文件需大于 10KB、ELF 魔数正确，复制后会再验证可执行性。失败不会覆盖原有的可用 `rdisc6`。
+   文件需大于 10KB，且校验 ELF64 Little Endian / AArch64 头，再通过限时执行检查排除无法运行、超时或异常退出。若设备缺少必要的校验命令，验证会保守失败；失败不会覆盖原有 `rdisc6`。
 2. **下载**
    填下载地址（默认上游仓库的 `rdisc6`），点“下载rdisc6”。下载先写 `.new` 临时文件，校验通过才替换。
 3. **上传**
@@ -261,7 +261,7 @@ RRA_NODE=/path/to/node.exe RRA_SH=/path/to/sh.exe sh tests/run_all.sh
 - `tools/sync-embedded.mjs --check`：插件内嵌脚本与仓库 Shell 源文件完全一致（防止只改未被调用的文件）；
 - 模拟 `ip` / `getprop` / `rdisc6` / `ping6`，覆盖：
   - 联通、移动、电信及大小写/空格/逗号；
-  - 剩余 12 小时不刷新、剩余 2 小时发 RS；
+  - 剩余 12 小时自动检查不刷新、手动 RS 仍执行；剩余 2 小时自动发送 RS；
   - 路由消失后 RS 恢复；
   - `rdisc6` 返回 0 但路由未出现 → 失败；
   - 没装 `rdisc6` → 明确报错且不删/不改路由；
@@ -269,10 +269,11 @@ RRA_NODE=/path/to/node.exe RRA_SH=/path/to/sh.exe sh tests/run_all.sh
   - 运营商属性为空/未知 → 安全跳过；兼容模式仅 RS；
   - 多实例并发 → 第二个跳过；
   - 失败冷却、阈值可调、静态路由；
-  - 关闭自动刷新后不留调度器循环；
+  - SIGTERM 停止调度器并清理 PID/锁文件；
+  - 路由意外恢复但未确认收到 RA 时，不伪报 RA 成功；
   - 删除路由仅高级模式可用。
 
-当前模拟测试结果：**171 项断言通过，0 失败，0 跳过**（Windows Git Bash 环境）。
+当前模拟测试结果：**184 项断言通过，0 失败，0 跳过**（GitHub Actions Ubuntu，2026-10-28）。测试报告：<https://github.com/cmhr0086/f50-ipv6-ra-refresh/actions/runs/40662643947>。
 
 **重要**：以上只是语法检查与模拟测试，**不代表已经在 F50 实机上验证通过**。新脚本尚未部署到真实设备；实机验证请按第 8 节先手动测试，再考虑开启自动刷新/开机自启。
 
@@ -325,7 +326,7 @@ file rdisc6   # 应显示: ELF 64-bit ... ARM aarch64, statically linked
 | `refresh_route_watch.sh` | 调度器源文件（与插件内嵌内容一致） |
 | `tools/sync-embedded.mjs` | 把两个 Shell 源文件同步进插件 JS；`--check` 只校验 |
 | `tests/run_all.sh` | 静态检查 + 模拟测试入口 |
-| `tests/run_tests.sh` | 171 项模拟断言 |
+| `tests/run_tests.sh` | 184 项模拟断言 |
 | `tests/check_plugin.mjs` | JS/Shell 语法、同步、安全默认值、UI/文档检查 |
 | `tests/mocks/` | 模拟 `ip` / `getprop` / `rdisc6` / `ping6` |
 | `rdisc6` | 上游提供的 aarch64 静态二进制（未改动） |
