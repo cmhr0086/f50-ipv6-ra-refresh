@@ -471,7 +471,7 @@ lock_busy() {
 take_lock() {
     mkdir "$LOCK" 2>/dev/null || return 1
     printf '%s\n' "$$" > "$LOCK/pid"
-    trap '[ "$(cat "$LOCK/pid" 2>/dev/null)" = "$" ] && rm -rf "$LOCK" 2>/dev/null' EXIT
+    trap '[ "$(cat "$LOCK/pid" 2>/dev/null)" = "$$" ] && rm -rf "$LOCK" 2>/dev/null' EXIT
     trap 'exit 0' INT TERM HUP
     return 0
 }
@@ -1221,10 +1221,10 @@ fi
 
 watch_cleanup() {
     [ -n "$CHILD_PID" ] && kill "$CHILD_PID" 2>/dev/null
-    if [ "$(cat "$WLOCK/pid" 2>/dev/null)" = "$" ]; then
+    if [ "$(cat "$WLOCK/pid" 2>/dev/null)" = "$$" ]; then
         rm -rf "$WLOCK" 2>/dev/null
     fi
-    if [ "$(cat "$PIDF" 2>/dev/null)" = "$" ]; then
+    if [ "$(cat "$PIDF" 2>/dev/null)" = "$$" ]; then
         rm -f "$PIDF" 2>/dev/null
     fi
 }
