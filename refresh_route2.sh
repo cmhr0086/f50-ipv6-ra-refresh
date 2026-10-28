@@ -440,7 +440,7 @@ lock_busy() {
 take_lock() {
     mkdir "$LOCK" 2>/dev/null || return 1
     printf '%s\n' "$$" > "$LOCK/pid"
-    trap '[ "$(cat "$LOCK/pid" 2>/dev/null)" = "$" ] && rm -rf "$LOCK" 2>/dev/null' EXIT
+    trap '[ "$(cat "$LOCK/pid" 2>/dev/null)" = "$$" ] && rm -rf "$LOCK" 2>/dev/null' EXIT
     trap 'exit 0' INT TERM HUP
     return 0
 }
