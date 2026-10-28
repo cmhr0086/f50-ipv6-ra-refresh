@@ -440,7 +440,8 @@ lock_busy() {
 take_lock() {
     mkdir "$LOCK" 2>/dev/null || return 1
     printf '%s\n' "$$" > "$LOCK/pid"
-    trap 'rm -rf "$LOCK" 2>/dev/null' EXIT INT TERM HUP
+    trap '[ "$(cat "$LOCK/pid" 2>/dev/null)" = "$" ] && rm -rf "$LOCK" 2>/dev/null' EXIT
+    trap 'exit 0' INT TERM HUP
     return 0
 }
 
@@ -866,19 +867,6 @@ esac
 [ "$GW_OK" = 1 ] && log "默认网关: $GW（表: $TABLE）"
 [ "$GW_OK" = 0 ] && [ -n "$GW" ] && log "警告：解析到的网关不在 fe80::/10，安全模式不会使用它"
 
-# 有效期充足或静态路由：不做任何修改。
-if [ "$ROUTE_STATE" = healthy ] || [ "$ROUTE_STATE" = static ]; then
-    test_connectivity
-    ROUTE_REFRESHED=not_needed
-    STRATEGY=none
-    if [ "$ROUTE_STATE" = static ]; then
-        write_result ok 0 "默认路由为静态（无 expires），无需刷新"
-    else
-        write_result ok 0 "默认有效期充足（$EXPIRES 秒），无需刷新"
-    fi
-    exit 0
-fi
-
 # ---- 最小重试间隔 ----
 if [ "$FORCE" != 1 ] && [ "$RS_ONLY" != 1 ]; then
     if ! check_cooldown; then
@@ -913,7 +901,7 @@ if [ "$RS_ONLY" = 1 ]; then
         if [ "$PRE_STATE" = missing ]; then
             ROUTE_REFRESHED=yes
             STRATEGY=nd_restore
-        elif [ "$ROUTE_STATE" = static ] || { is_uint "$EXPIRES" && [ "$EXPIRES" -gt "$PRE_EXP" ]; }; then
+        elif { [ "$PRE_STATE" != static ] && [ "$ROUTE_STATE" = static ]; } || { is_uint "$EXPIRES" && [ "$EXPIRES" -gt "$PRE_EXP" ]; }; then
             ROUTE_REFRESHED=yes
             STRATEGY=nd_renew
         else
@@ -931,6 +919,20 @@ if [ "$RS_ONLY" = 1 ]; then
     write_result fail 1 "未收到 RA（rdisc6 退出码 $RS_RC）"
     exit 1
 fi
+
+# 有效期充足或静态路由：不做任何修改。
+if [ "$ROUTE_STATE" = healthy ] || [ "$ROUTE_STATE" = static ]; then
+    test_connectivity
+    ROUTE_REFRESHED=not_needed
+    STRATEGY=none
+    if [ "$ROUTE_STATE" = static ]; then
+        write_result ok 0 "默认路由为静态（无 expires），无需刷新"
+    else
+        write_result ok 0 "默认有效期充足（$EXPIRES 秒），无需刷新"
+    fi
+    exit 0
+fi
+
 
 PRE_STATE=$ROUTE_STATE
 if is_uint "$EXPIRES"; then PRE_EXP=$EXPIRES; else PRE_EXP=0; fi
@@ -958,7 +960,12 @@ if [ "$MODE" = safe ]; then
         set_strategy "$STRATEGY"
         log "刷新结果：路由已验证刷新（$ROUTE_STATE，剩余 $EXPIRES 秒，策略 $STRATEGY）"
         test_connectivity
-        write_result ok 0 "已收到 RA，IPv6 默认路由已验证刷新（剩余 $EXPIRES 秒，策略 $STRATEGY）"
+        if [ "$RA_RECEIVED" = yes ]; then
+            write_result ok 0 "收到 RA，IPv6 默认路由已验证刷新（剩余 $EXPIRES 秒，策略 $STRATEGY）"
+        else
+            log "警告：路由已刷新，但 rdisc6 未确认收到 RA（退出码 $RS_RC）"
+            write_result ok 0 "路由已刷新，但未确认收到 RA（rdisc6 退出码 $RS_RC）"
+        fi
         exit 0
     fi
     read_route
