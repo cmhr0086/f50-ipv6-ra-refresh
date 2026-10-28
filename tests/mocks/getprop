@@ -1,0 +1,3 @@
+#!/bin/sh
+# 模拟 Android getprop：只关心 gsm.sim.operator.alpha
+cat "$MOCK_DIR/operator" 2>/dev/null

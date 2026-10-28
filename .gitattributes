@@ -1,0 +1,9 @@
+# 设备端脚本与插件必须是 LF：Android sh 不能解析 CRLF 脚本。
+* text=auto
+*.sh text eol=lf
+*.js text eol=lf
+*.mjs text eol=lf
+*.md text eol=lf
+tests/mocks/* text eol=lf
+# 上游附带的参考文档保持原样，不做换行归一化
+让AI帮你编写UFI-TOOLS插件/** -text

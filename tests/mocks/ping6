@@ -1,0 +1,6 @@
+#!/bin/sh
+M=$MOCK_DIR
+printf '%s\n' "$*" >> "$M/ping_calls"
+MODE=$(cat "$M/ping_mode" 2>/dev/null)
+[ "$MODE" = ok ] && exit 0
+exit 1

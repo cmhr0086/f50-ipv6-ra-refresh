@@ -1,0 +1,22 @@
+name: RA refresh regression tests
+
+on:
+  push:
+    branches:
+      - main
+      - feat/unicom-safe-ra-refresh
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Shell and plugin regression tests
+        run: sh tests/run_all.sh
