@@ -72,7 +72,7 @@
 #   PING_ENABLE=0|1                   是否做公网 IPv6 连通性测试（默认 1）
 #   PING_TARGET=2400:3200::1          连通性测试目标
 #   MIN_RETRY=300                     两次刷新尝试的最小间隔（秒），防止快速重试
-#   RDISC6_TIMEOUT=3                  rdisc6 外层超时（秒）
+#   RDISC6_TIMEOUT=10                 rdisc6 外层超时（秒）
 #   SETTLE_TRIES=6                    发 RA 后等待路由变化的最大秒数
 #
 
@@ -235,7 +235,7 @@ read_conf() {
     ALLOW_UNKNOWN_OPERATOR=$(clamp_uint "$(conf_get ALLOW_UNKNOWN_OPERATOR 0)" 0 1 0)
     PING_ENABLE=$(clamp_uint "$(conf_get PING_ENABLE 1)" 0 1 1)
     MIN_RETRY=$(clamp_uint "$(conf_get MIN_RETRY 300)" 60 86400 300)
-    RDISC6_TIMEOUT=$(clamp_uint "$(conf_get RDISC6_TIMEOUT 3)" 1 30 3)
+    RDISC6_TIMEOUT=$(clamp_uint "$(conf_get RDISC6_TIMEOUT 10)" 1 30 10)
     SETTLE_TRIES=$(clamp_uint "$(conf_get SETTLE_TRIES 6)" 1 20 6)
     PING_TARGET=$(conf_get PING_TARGET 2400:3200::1)
     case "$PING_TARGET" in
@@ -1279,7 +1279,7 @@ done
         PING_ENABLE: 1,
         PING_TARGET: '2400:3200::1',
         MIN_RETRY: 300,
-        RDISC6_TIMEOUT: 3,
+        RDISC6_TIMEOUT: 10,
         SETTLE_TRIES: 6,
     }
     let coreConfig = { ...DEFAULT_CORE_CONF }
@@ -1415,7 +1415,7 @@ done
                 PING_ENABLE: toInt(st.CONF_PING_ENABLE, 1),
                 PING_TARGET: st.CONF_PING_TARGET || '2400:3200::1',
                 MIN_RETRY: toInt(st.CONF_MIN_RETRY, 300),
-                RDISC6_TIMEOUT: toInt(st.CONF_RDISC6_TIMEOUT, 3),
+                RDISC6_TIMEOUT: toInt(st.CONF_RDISC6_TIMEOUT, 10),
                 SETTLE_TRIES: toInt(st.CONF_SETTLE_TRIES, 6),
             }
         }
@@ -1604,7 +1604,7 @@ done
 
         // 首次安装写入安全默认配置；更新时保留用户已有配置
         const initConf = await runShellWithRoot(
-            `C=${RRA.coreConfPath}; if [ ! -f "$C" ]; then printf '%s\\n' 'MODE=safe' 'THRESHOLD=21600' 'ALLOW_UNKNOWN_OPERATOR=0' 'PING_ENABLE=1' 'PING_TARGET=2400:3200::1' 'MIN_RETRY=300' 'RDISC6_TIMEOUT=3' 'SETTLE_TRIES=6' > "$C"; fi; chmod 600 "$C" 2>/dev/null; [ -f "$C" ] && echo RRA_CONF_OK || echo RRA_CONF_FAIL`
+            `C=${RRA.coreConfPath}; if [ ! -f "$C" ]; then printf '%s\\n' 'MODE=safe' 'THRESHOLD=21600' 'ALLOW_UNKNOWN_OPERATOR=0' 'PING_ENABLE=1' 'PING_TARGET=2400:3200::1' 'MIN_RETRY=300' 'RDISC6_TIMEOUT=10' 'SETTLE_TRIES=6' > "$C"; fi; chmod 600 "$C" 2>/dev/null; [ -f "$C" ] && echo RRA_CONF_OK || echo RRA_CONF_FAIL`
         )
         if (!(initConf?.content || '').includes('RRA_CONF_OK')) {
             return createToast('初始化安全配置失败，请检查插件目录', 'red')
