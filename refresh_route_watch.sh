@@ -39,10 +39,10 @@ fi
 
 watch_cleanup() {
     [ -n "$CHILD_PID" ] && kill "$CHILD_PID" 2>/dev/null
-    if [ "$(cat "$WLOCK/pid" 2>/dev/null)" = "$" ]; then
+    if [ "$(cat "$WLOCK/pid" 2>/dev/null)" = "$$" ]; then
         rm -rf "$WLOCK" 2>/dev/null
     fi
-    if [ "$(cat "$PIDF" 2>/dev/null)" = "$" ]; then
+    if [ "$(cat "$PIDF" 2>/dev/null)" = "$$" ]; then
         rm -f "$PIDF" 2>/dev/null
     fi
 }
