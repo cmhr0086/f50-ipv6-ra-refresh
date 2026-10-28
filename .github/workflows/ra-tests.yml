@@ -3,6 +3,7 @@ name: RA refresh regression tests
 on:
   push:
     branches:
+      - main
       - feat/unicom-safe-ra-refresh
   pull_request:
   workflow_dispatch:
