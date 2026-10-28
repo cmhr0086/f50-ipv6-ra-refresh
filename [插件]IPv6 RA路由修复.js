@@ -1742,7 +1742,7 @@ for P in /data/local/tmp/rdisc6 /data/xl_cron/bin/rdisc6 /sdcard/rdisc6; do
     SZ=$(wc -c < "$P" 2>/dev/null)
     [ "$SZ" -ge 10240 ] 2>/dev/null || continue
     dd if="$P" bs=1 count=4 2>/dev/null | grep -q ELF || continue
-    cp "$P" ${tmp} 2>/dev/null && chmod 777 ${tmp} 2>/dev/null && echo "IMPORTED:$P" && exit 0
+    cp "$P" ${tmp} 2>/dev/null && chmod 700 ${tmp} 2>/dev/null && echo "IMPORTED:$P" && exit 0
 done
 echo "IMPORTED:none"
 `, 30 * 1000)
